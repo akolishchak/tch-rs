@@ -299,4 +299,40 @@ impl<T> Optimizer<T> {
             .set_weight_decay_group(group, weight_decay)
             .unwrap()
     }
+    /// Get gradient L2 norm over all trainable parameters.
+    ///
+    /// The norm is computed over all gradients together, as if they were
+    /// concatenated into a single vector.
+    pub fn get_grad_norm(&self) -> f64 {
+        crate::no_grad(|| {
+            let v = self.variables.lock().unwrap();
+            let mut norms = vec![];
+            for var in v.trainable_variables.iter() {
+                if !var.tensor.grad().defined() {
+                    continue;
+                }
+                norms.push(var.tensor.grad().norm());
+            }
+            if !norms.is_empty() {
+                f64::from(Tensor::stack(&norms, 0).norm())
+            } else {
+                0.0
+            }
+        })
+    }
+
+    /// Get L2 norm over all trainable parameters.
+    ///
+    /// The norm is computed over all gradients together, as if they were
+    /// concatenated into a single vector.
+    pub fn get_norm(&self) -> f64 {
+        crate::no_grad(|| {
+            let v = self.variables.lock().unwrap();
+            let mut norms = vec![];
+            for var in v.trainable_variables.iter() {
+                norms.push(var.tensor.norm());
+            }
+            f64::from(Tensor::stack(&norms, 0).norm())
+        })
+    }
 }
