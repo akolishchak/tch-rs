@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use curl::easy::Easy;
 
-const TORCH_VERSION: &str = "1.8.0";
+const TORCH_VERSION: &str = "1.8.1";
 
 fn download<P: AsRef<Path>>(source_url: &str, target_file: P) -> anyhow::Result<()> {
     let f = fs::File::create(&target_file)?;
@@ -104,7 +104,7 @@ fn prepare_libtorch_dir() -> PathBuf {
                         "cpu" => "%2Bcpu",
                         "cu92" => "%2Bcu92",
                         "cu101" => "%2Bcu101",
-                        "cu110" => "%2Bcu110",
+                        "cu111" => "%2Bcu111",
                         _ => ""
                     }
                 ),
@@ -118,7 +118,7 @@ fn prepare_libtorch_dir() -> PathBuf {
                         "cpu" => "%2Bcpu",
                         "cu92" => "%2Bcu92",
                         "cu101" => "%2Bcu101",
-                        "cu110" => "%2Bcu110",
+                        "cu111" => "%2Bcu111",
                         _ => ""
                     }),
                 _ => panic!("Unsupported OS"),
