@@ -19,10 +19,16 @@ The code generation part for the C api on top of libtorch comes from
 This crate requires the C++ PyTorch library (libtorch) in version *v1.8.1* to be available on
 your system. You can either:
 
+- Use the system-wide libtorch installation (default).
 - Install libtorch manually and let the build script know about it via the `LIBTORCH` environment variable.
-- When `LIBTORCH` is not set, the build script will download a pre-built binary version
+- When a system-wide libtorch can't be found and `LIBTORCH` is not set, the build script will download a pre-built binary version
 of libtorch. By default a CPU version is used. The `TORCH_CUDA_VERSION` environment variable
 can be set to `cu111` in order to get a pre-built binary using CUDA 11.1.
+
+### System-wide Libtorch
+
+The build script will look for a system-wide libtorch library in the following locations:
+- In Linux: `/usr/lib/libtorch.so`
 
 ### Libtorch Manual Install
 
@@ -90,8 +96,8 @@ Then on each step of the training loop:
 
 ```rust
 extern crate tch;
-use tch::nn;
-use tch::Tensor;
+use tch::nn::{Module, OptimizerConfig};
+use tch::{kind, nn, Device, Tensor};
 
 fn my_module(p: nn::Path, dim: i64) -> impl nn::Module {
     let x1 = p.zeros("x1", &[dim]);
@@ -102,12 +108,12 @@ fn my_module(p: nn::Path, dim: i64) -> impl nn::Module {
 fn gradient_descent() {
     let vs = nn::VarStore::new(Device::Cpu);
     let my_module = my_module(vs.root(), 7);
-    let opt = nn::Sgd::default().build(&vs, 1e-2).unwrap();
+    let mut opt = nn::Sgd::default().build(&vs, 1e-2).unwrap();
     for _idx in 1..50 {
         // Dummy mini-batches made of zeros.
         let xs = Tensor::zeros(&[7], kind::FLOAT_CPU);
         let ys = Tensor::zeros(&[7], kind::FLOAT_CPU);
-        let loss = (my_module.forward(&xs) - ys).pow(2).sum();
+        let loss = (my_module.forward(&xs) - ys).pow(2).sum(kind::Kind::Float);
         opt.backward_step(&loss);
     }
 }
