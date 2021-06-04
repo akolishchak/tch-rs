@@ -677,6 +677,11 @@ impl TrainableCModule {
     pub fn set_eval(&mut self) {
         self.inner.set_eval()
     }
+
+    pub fn forward(&self, xs: &[&Tensor]) -> Tensor {
+        self.inner.forward_ts(xs).unwrap()
+    }
+
 }
 
 pub fn f_get_profiling_mode() -> Result<bool, TchError> {
