@@ -16,7 +16,7 @@ The code generation part for the C api on top of libtorch comes from
 
 ## Getting Started
 
-This crate requires the C++ PyTorch library (libtorch) in version *v1.8.1* to be available on
+This crate requires the C++ PyTorch library (libtorch) in version *v1.10.0* to be available on
 your system. You can either:
 
 - Use the system-wide libtorch installation (default).
@@ -65,7 +65,6 @@ This crate provides a tensor type which wraps PyTorch tensors. Here is a minimal
 example of how to perform some tensor operations.
 
 ```rust
-extern crate tch;
 use tch::Tensor;
 
 fn main() {
@@ -95,7 +94,6 @@ Then on each step of the training loop:
 
 
 ```rust
-extern crate tch;
 use tch::nn::{Module, OptimizerConfig};
 use tch::{kind, nn, Device, Tensor};
 
@@ -113,7 +111,7 @@ fn gradient_descent() {
         // Dummy mini-batches made of zeros.
         let xs = Tensor::zeros(&[7], kind::FLOAT_CPU);
         let ys = Tensor::zeros(&[7], kind::FLOAT_CPU);
-        let loss = (my_module.forward(&xs) - ys).pow(2).sum(kind::Kind::Float);
+        let loss = (my_module.forward(&xs) - ys).pow_tensor_scalar(2).sum(kind::Kind::Float);
         opt.backward_step(&loss);
     }
 }
@@ -125,8 +123,6 @@ The `nn` api can be used to create neural network architectures, e.g. the follow
 a simple model with one hidden layer and trains it on the MNIST dataset using the Adam optimizer.
 
 ```rust
-extern crate anyhow;
-extern crate tch;
 use anyhow::Result;
 use tch::{nn, nn::Module, nn::OptimizerConfig, Device};
 

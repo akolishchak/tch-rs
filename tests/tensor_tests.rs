@@ -65,15 +65,9 @@ fn array_conversion() {
     let t = Tensor::of_slice(&vec);
     assert_eq!(Vec::<f64>::from(&t), [0.0, 1.0, 4.0, 9.0, 16.0, 25.0]);
     let t = t.view([3, 2]);
-    assert_eq!(
-        Vec::<Vec<f64>>::from(&t),
-        [[0.0, 1.0], [4.0, 9.0], [16.0, 25.0]]
-    );
+    assert_eq!(Vec::<Vec<f64>>::from(&t), [[0.0, 1.0], [4.0, 9.0], [16.0, 25.0]]);
     let t = t.view([2, 3]);
-    assert_eq!(
-        Vec::<Vec<f64>>::from(&t),
-        [[0.0, 1.0, 4.0], [9.0, 16.0, 25.0]]
-    )
+    assert_eq!(Vec::<Vec<f64>>::from(&t), [[0.0, 1.0, 4.0], [9.0, 16.0, 25.0]])
 }
 
 #[test]
@@ -150,7 +144,7 @@ fn fallible() {
     // error.
     let xs = Tensor::of_slice(&[0, 1, 2, 3]);
     let ys = Tensor::of_slice(&[0, 1, 2, 3, 4]);
-    assert!(xs.f_eq1(&ys).is_err())
+    assert!(xs.f_eq_tensor(&ys).is_err())
 }
 
 #[test]
@@ -241,10 +235,7 @@ fn from_ndarray_bool() {
 fn from_primitive() -> Result<()> {
     assert_eq!(Vec::<i32>::from(Tensor::try_from(1_i32)?), vec![1]);
     assert_eq!(Vec::<i64>::from(Tensor::try_from(1_i64)?), vec![1]);
-    assert_eq!(
-        Vec::<f16>::from(Tensor::try_from(f16::from_f64(1.0))?),
-        vec![f16::from_f64(1.0)]
-    );
+    assert_eq!(Vec::<f16>::from(Tensor::try_from(f16::from_f64(1.0))?), vec![f16::from_f64(1.0)]);
     assert_eq!(Vec::<f32>::from(Tensor::try_from(1_f32)?), vec![1.0]);
     assert_eq!(Vec::<f64>::from(Tensor::try_from(1_f64)?), vec![1.0]);
     assert_eq!(Vec::<bool>::from(Tensor::try_from(true)?), vec![true]);
@@ -253,14 +244,8 @@ fn from_primitive() -> Result<()> {
 
 #[test]
 fn from_vec() -> Result<()> {
-    assert_eq!(
-        Vec::<i32>::from(Tensor::try_from(vec![-1_i32, 0, 1])?),
-        vec![-1, 0, 1]
-    );
-    assert_eq!(
-        Vec::<i64>::from(Tensor::try_from(vec![-1_i64, 0, 1])?),
-        vec![-1, 0, 1]
-    );
+    assert_eq!(Vec::<i32>::from(Tensor::try_from(vec![-1_i32, 0, 1])?), vec![-1, 0, 1]);
+    assert_eq!(Vec::<i64>::from(Tensor::try_from(vec![-1_i64, 0, 1])?), vec![-1, 0, 1]);
     assert_eq!(
         Vec::<f16>::from(Tensor::try_from(vec![
             f16::from_f64(-1.0),
@@ -269,31 +254,16 @@ fn from_vec() -> Result<()> {
         ])?),
         vec![f16::from_f64(-1.0), f16::from_f64(0.0), f16::from_f64(1.0)]
     );
-    assert_eq!(
-        Vec::<f32>::from(Tensor::try_from(vec![-1_f32, 0.0, 1.0])?),
-        vec![-1.0, 0.0, 1.0]
-    );
-    assert_eq!(
-        Vec::<f64>::from(Tensor::try_from(vec![-1_f64, 0.0, 1.0])?),
-        vec![-1.0, 0.0, 1.0]
-    );
-    assert_eq!(
-        Vec::<bool>::from(Tensor::try_from(vec![true, false])?),
-        vec![true, false]
-    );
+    assert_eq!(Vec::<f32>::from(Tensor::try_from(vec![-1_f32, 0.0, 1.0])?), vec![-1.0, 0.0, 1.0]);
+    assert_eq!(Vec::<f64>::from(Tensor::try_from(vec![-1_f64, 0.0, 1.0])?), vec![-1.0, 0.0, 1.0]);
+    assert_eq!(Vec::<bool>::from(Tensor::try_from(vec![true, false])?), vec![true, false]);
     Ok(())
 }
 
 #[test]
 fn from_slice() -> Result<()> {
-    assert_eq!(
-        Vec::<i32>::from(Tensor::try_from(&[-1_i32, 0, 1] as &[_])?),
-        vec![-1, 0, 1]
-    );
-    assert_eq!(
-        Vec::<i64>::from(Tensor::try_from(&[-1_i64, 0, 1] as &[_])?),
-        vec![-1, 0, 1]
-    );
+    assert_eq!(Vec::<i32>::from(Tensor::try_from(&[-1_i32, 0, 1] as &[_])?), vec![-1, 0, 1]);
+    assert_eq!(Vec::<i64>::from(Tensor::try_from(&[-1_i64, 0, 1] as &[_])?), vec![-1, 0, 1]);
     assert_eq!(
         Vec::<f16>::from(Tensor::try_from(&[
             f16::from_f64(-1.0),
@@ -310,10 +280,7 @@ fn from_slice() -> Result<()> {
         Vec::<f64>::from(Tensor::try_from(&[-1_f64, 0.0, 1.0] as &[_])?),
         vec![-1.0, 0.0, 1.0]
     );
-    assert_eq!(
-        Vec::<bool>::from(Tensor::try_from(&[true, false] as &[_])?),
-        vec![true, false]
-    );
+    assert_eq!(Vec::<bool>::from(Tensor::try_from(&[true, false] as &[_])?), vec![true, false]);
     Ok(())
 }
 
@@ -326,9 +293,7 @@ fn test_device() {
     if tch::Cuda::device_count() > 0 {
         let x = Tensor::from(1).to_device(Device::Cuda(0));
         assert_eq!(x.device(), Device::Cuda(0));
-        let x = Tensor::from(1)
-            .to_device(Device::Cuda(0))
-            .to_device(Device::Cpu);
+        let x = Tensor::from(1).to_device(Device::Cuda(0)).to_device(Device::Cpu);
         assert_eq!(x.device(), Device::Cpu);
     }
 }
@@ -337,7 +302,7 @@ fn test_device() {
 fn where_() {
     let t1 = Tensor::of_slice(&[3, 1, 4, 1, 5, 9]);
     let t2 = Tensor::of_slice(&[2, 7, 1, 8, 2, 8]);
-    let t = t1.where1(&t1.lt(4), &t2);
+    let t = t1.where_self(&t1.lt(4), &t2);
     assert_eq!(Vec::<i64>::from(&t), [3, 1, 1, 1, 2, 8]);
 }
 
@@ -400,10 +365,7 @@ fn einsum() {
 #[test]
 fn vec2() {
     let tensor = Tensor::of_slice(&[1., 2., 3., 4., 5., 6.]).reshape(&[2, 3]);
-    assert_eq!(
-        Vec::<Vec::<f64>>::from(tensor),
-        [[1., 2., 3.], [4., 5., 6.]]
-    )
+    assert_eq!(Vec::<Vec::<f64>>::from(tensor), [[1., 2., 3.], [4., 5., 6.]])
 }
 
 #[test]
@@ -416,10 +378,7 @@ fn upsample1d() {
         [1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0, 6.0]
     );
     let up1 = tensor.upsample_linear1d(&[2], false, None);
-    assert_eq!(
-        Vec::<f64>::from(up1),
-        [1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0, 6.0]
-    );
+    assert_eq!(Vec::<f64>::from(up1), [1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0, 6.0]);
 }
 
 #[test]
@@ -482,4 +441,20 @@ fn nll_loss() {
     let weights = Tensor::of_slice(&[1f32, 2.0, 2.0, 1.0, 1.0]);
     // This used to segfault, see https://github.com/LaurentMazare/tch-rs/issues/366
     let _output = input.g_nll_loss(&target, Some(weights), tch::Reduction::Mean, -100);
+}
+
+#[test]
+fn allclose() {
+    let t = Tensor::of_slice(&[-1f32, 0., 1., 2., 120., 0.42]);
+    let t = t.quantize_per_tensor(0.1, 10, tch::Kind::QUInt8);
+    let t = t.dequantize();
+    assert_eq!(t.allclose(&(&t + 0.1), 1e-5, 1e-8, false), false);
+    assert_eq!(t.allclose(&(&t + 1e-9), 1e-5, 1e-8, false), true);
+}
+
+#[test]
+fn set_data() {
+    let mut t = Tensor::of_slice(&[-1f32, 0., 1., 2., 120., 0.42]);
+    t.set_data(&t.to_kind(tch::Kind::BFloat16));
+    assert_eq!(t.kind(), tch::Kind::BFloat16);
 }

@@ -288,8 +288,83 @@ void at_copy_(tensor dst, tensor src) {
   )
 }
 
+namespace {
+  class WriteStreamAdapter {
+  private:
+    void *_stream_ptr;
+  public:
+    WriteStreamAdapter(void *stream_ptr) : _stream_ptr(stream_ptr) {}
+
+    ~WriteStreamAdapter() {
+      tch_write_stream_destructor(_stream_ptr);
+    }
+
+    size_t save(const void* data, size_t size) {
+      size_t out_size = 0;
+      if (!tch_write_stream_write(_stream_ptr, static_cast<const uint8_t*>(data), size, &out_size)) {
+        throw std::ios_base::failure("tch_write_stream_write has returned error");
+      }
+      return out_size;
+    }
+  };
+
+  class ReadStreamAdapter : public caffe2::serialize::ReadAdapterInterface {
+  private:
+    void *_stream_ptr;
+
+  public:
+    ReadStreamAdapter(void *stream_ptr) : _stream_ptr(stream_ptr) {}
+
+    virtual ~ReadStreamAdapter() {
+      tch_read_stream_destructor(_stream_ptr);
+    }
+
+    virtual size_t size() const {
+      uint64_t current = 0;
+      if (!tch_read_stream_stream_position(_stream_ptr, &current)) {
+        throw std::ios_base::failure("tch_read_stream_stream_position has returned error");
+      }
+
+      uint64_t size = 0;
+      if (!tch_read_stream_seek_end(_stream_ptr, 0, &size)) {
+        throw std::ios_base::failure("tch_read_stream_seek_end has returned error");
+      }
+
+      uint64_t dummy = 0;
+      if (!tch_read_stream_seek_start(_stream_ptr, current, &dummy)) {
+        throw std::ios_base::failure("tch_read_stream_seek_start has returned error");
+      }
+
+      return size;
+    }
+
+    virtual size_t read(uint64_t pos, void *buf, size_t n, const char *what) const {
+      uint64_t dummy = 0;
+      if (!tch_read_stream_seek_start(_stream_ptr, pos, &dummy)) {
+        throw std::ios_base::failure("tch_read_stream_seek_start has returned error");
+      }
+
+      size_t size = 0;
+      if (!tch_read_stream_read(_stream_ptr, static_cast<uint8_t*>(buf), n, &size)) {
+        throw std::ios_base::failure("tch_read_stream_read has returned error");
+      }
+
+      return size;
+    }
+  };
+}
+
 void at_save(tensor t, char *filename) {
   PROTECT(torch::save(*t, filename);)
+}
+
+void at_save_to_stream(tensor t, void *stream_ptr) {
+  PROTECT(
+    auto adapter = std::shared_ptr<WriteStreamAdapter>(new WriteStreamAdapter(stream_ptr));
+    torch::save(*t, [adapter](const void *data, size_t size) {
+      return adapter->save(data, size);
+    });
+  )
 }
 
 void at_save_multi(tensor *tensors, char **tensor_names, int ntensors, char *filename) {
@@ -298,6 +373,18 @@ void at_save_multi(tensor *tensors, char **tensor_names, int ntensors, char *fil
     for (int i = 0; i < ntensors; ++i)
       archive.write(std::string(tensor_names[i]), *(tensors[i]), /* buffer=*/ false);
     archive.save_to(filename);
+  )
+}
+
+void at_save_multi_to_stream(tensor *tensors, char **tensor_names, int ntensors, void *stream_ptr) {
+  PROTECT(
+    auto adapter = std::shared_ptr<WriteStreamAdapter>(new WriteStreamAdapter(stream_ptr));
+    torch::serialize::OutputArchive archive;
+    for (int i = 0; i < ntensors; ++i)
+      archive.write(std::string(tensor_names[i]), *(tensors[i]), /* buffer=*/ false);
+    archive.save_to([adapter](const void *data, size_t size) {
+      return adapter->save(data, size);
+    });
   )
 }
 
@@ -335,6 +422,17 @@ void at_load_callback_with_device(char *filename, void *data, void (*f)(void *, 
   )
 }
 
+void at_load_from_stream_callback(void *stream_ptr, void *data, void (*f)(void *, char *, tensor), bool enable_device_id, int device_id) {
+  PROTECT(
+    auto adapter = std::shared_ptr<caffe2::serialize::ReadAdapterInterface>(new ReadStreamAdapter(stream_ptr));
+    auto module = enable_device_id ? torch::jit::load(adapter, device_of_int(device_id)) : torch::jit::load(adapter);
+    for (const auto &p : module.named_parameters()) {
+      auto v = p.value;
+      f(data, (char*)p.name.c_str(), new torch::Tensor(v));
+    }
+  )
+}
+
 void at_load_multi_(tensor *tensors, char **tensor_names, int ntensors, char *filename) {
   PROTECT(
     torch::NoGradGuard no_grad;
@@ -361,12 +459,43 @@ tensor at_load(char *filename) {
   return nullptr;
 }
 
+tensor at_load_from_stream(void *stream_ptr) {
+  PROTECT(
+    torch::NoGradGuard no_grad;
+    torch::Tensor tensor;
+    auto adapter = std::shared_ptr<caffe2::serialize::ReadAdapterInterface>(new ReadStreamAdapter(stream_ptr));
+    torch::load(
+      tensor,
+      [adapter](uint64_t pos, void *buf, size_t nbytes){ return adapter->read(pos, buf, nbytes, "tensor" ); },
+      [adapter]() { return adapter->size(); }
+    );
+    return new torch::Tensor(tensor);
+  )
+  return nullptr;
+}
+
 tensor at_load_image(char *filename) {
   PROTECT(
     int w = -1;
     int h = -1;
     int c = -1;
     void *data = stbi_load(filename, &w, &h, &c, 3);
+    if (data == nullptr)
+      throw std::invalid_argument(stbi_failure_reason());
+    torch::Tensor tensor = torch::zeros({ h, w, 3 }, at::ScalarType::Byte);
+    memcpy(tensor.data_ptr(), data, h * w * 3);
+    free(data);
+    return new torch::Tensor(tensor);
+  )
+  return nullptr;
+}
+
+tensor at_load_image_from_memory(unsigned char *img_data, size_t img_size) {
+  PROTECT(
+    int w = -1;
+    int h = -1;
+    int c = -1;
+    void *data = stbi_load_from_memory(img_data, img_size, &w, &h, &c, 3);
     if (data == nullptr)
       throw std::invalid_argument(stbi_failure_reason());
     torch::Tensor tensor = torch::zeros({ h, w, 3 }, at::ScalarType::Byte);
@@ -794,6 +923,15 @@ int atc_cudnn_is_available() {
   return -1;
 }
 
+int atc_user_enabled_cudnn() {
+  PROTECT(return at::globalContext().userEnabledCuDNN();)
+  return -1;
+}
+
+void atc_set_user_enabled_cudnn(int b) {
+  at::globalContext().setUserEnabledCuDNN(b);
+}
+
 void atc_set_benchmark_cudnn(int b) {
   at::globalContext().setBenchmarkCuDNN(b);
 }
@@ -933,7 +1071,7 @@ module atm_create_for_tracing(
     for (int i = 0; i < ninputs; ++i) {
       auto value = state->graph->addInput();
       value->setType(torch::jit::TensorType::get());
-      state->setValue(*inputs[i], value); 
+      state->setValue(*inputs[i], value);
     }
     return new torch::jit::script::Module(modl);
   )
@@ -1096,7 +1234,8 @@ int ati_tag(ivalue i) {
     else if (i->isTensorList()) return 10;
     else if (i->isList()) return 12;
     else if (i->isGenericDict()) return 13;
-    throw std::invalid_argument(("unsupported tag" + i->tagKind()).c_str());
+    else if (i->isObject()) return 14;
+    throw std::invalid_argument(("unsupported tag " + i->tagKind()).c_str());
     return -1;
   )
   return -1;
@@ -1255,6 +1394,17 @@ void ati_to_tensor_list(ivalue i,
   )
 }
 
+ivalue ati_object_method_(ivalue i, char *method_name, ivalue *ivalues, int nivalues) {
+  PROTECT(
+    std::vector<torch::jit::IValue> inputs;
+    inputs.push_back(*i); // self parameter
+    for (int j = 0; j < nivalues; ++j)
+      inputs.push_back(*(ivalues[j]));
+    torch::jit::IValue output = i->toObjectRef().type()->getMethod(method_name)(std::move(inputs));
+    return new torch::jit::IValue(output);
+  )
+  return nullptr;
+}
 
 void ati_free(ivalue i) {
   delete(i);

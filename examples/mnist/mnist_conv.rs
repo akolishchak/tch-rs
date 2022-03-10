@@ -17,12 +17,7 @@ impl Net {
         let conv2 = nn::conv2d(vs, 32, 64, 5, Default::default());
         let fc1 = nn::linear(vs, 1024, 1024, Default::default());
         let fc2 = nn::linear(vs, 1024, 10, Default::default());
-        Net {
-            conv1,
-            conv2,
-            fc1,
-            fc2,
-        }
+        Net { conv1, conv2, fc1, fc2 }
     }
 }
 
@@ -36,7 +31,7 @@ impl nn::ModuleT for Net {
             .view([-1, 1024])
             .apply(&self.fc1)
             .relu()
-            .dropout_(0.5, train)
+            .dropout(0.5, train)
             .apply(&self.fc2)
     }
 }
@@ -48,9 +43,7 @@ pub fn run() -> Result<()> {
     let mut opt = nn::Adam::default().build(&vs, 1e-4)?;
     for epoch in 1..100 {
         for (bimages, blabels) in m.train_iter(256).shuffle().to_device(vs.device()) {
-            let loss = net
-                .forward_t(&bimages, true)
-                .cross_entropy_for_logits(&blabels);
+            let loss = net.forward_t(&bimages, true).cross_entropy_for_logits(&blabels);
             opt.backward_step(&loss);
         }
         let test_accuracy =

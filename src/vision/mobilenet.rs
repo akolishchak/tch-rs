@@ -68,13 +68,16 @@ pub fn v2(p: &nn::Path, nclasses: i64) -> impl ModuleT {
         }
     }
     features = features.add(cbr(&f_p / layer_id, c_in, 1280, 1, 1, 1));
-    let classifier = nn::seq_t()
-        .add_fn_t(|xs, train| xs.dropout(0.2, train))
-        .add(nn::linear(&c_p / 1, 1280, nclasses, Default::default()));
+    let classifier = nn::seq_t().add_fn_t(|xs, train| xs.dropout(0.2, train)).add(nn::linear(
+        &c_p / 1,
+        1280,
+        nclasses,
+        Default::default(),
+    ));
     nn::func_t(move |xs, train| {
         xs.apply_t(&features, train)
-            .mean1(&[2], false, crate::Kind::Float)
-            .mean1(&[2], false, crate::Kind::Float)
+            .mean_dim(&[2], false, crate::Kind::Float)
+            .mean_dim(&[2], false, crate::Kind::Float)
             .apply_t(&classifier, train)
     })
 }

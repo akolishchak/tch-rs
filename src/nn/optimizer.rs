@@ -6,11 +6,10 @@ use std::sync::{Arc, Mutex};
 
 /// An optimizer to run gradient descent.
 #[derive(Debug)]
-pub struct Optimizer<T> {
+pub struct Optimizer {
     opt: COptimizer,
     variables: Arc<Mutex<Variables>>,
     variables_in_optimizer: usize,
-    config: T,
 }
 
 /// Optimizer configurations. These configs can be used to build optimizer.
@@ -21,7 +20,7 @@ where
     fn build_copt(&self, lr: f64) -> Result<COptimizer, TchError>;
 
     /// Builds an optimizer with the specified learning rate handling variables stored in `vs`.
-    fn build(self, vs: &VarStore, lr: f64) -> Result<Optimizer<Self>, TchError> {
+    fn build(self, vs: &VarStore, lr: f64) -> Result<Optimizer, TchError> {
         let mut opt = self.build_copt(lr)?;
         let v = vs.variables_.lock().unwrap();
         for var in &v.trainable_variables {
@@ -31,7 +30,6 @@ where
             opt,
             variables: vs.variables_.clone(),
             variables_in_optimizer: v.trainable_variables.len(),
-            config: self,
         })
     }
 }
@@ -47,23 +45,13 @@ pub struct Sgd {
 
 impl Default for Sgd {
     fn default() -> Self {
-        Sgd {
-            momentum: 0.,
-            dampening: 0.,
-            wd: 0.,
-            nesterov: false,
-        }
+        Sgd { momentum: 0., dampening: 0., wd: 0., nesterov: false }
     }
 }
 
 /// Creates the configuration for a Stochastic Gradient Descent (SGD) optimizer.
 pub fn sgd(momentum: f64, dampening: f64, wd: f64, nesterov: bool) -> Sgd {
-    Sgd {
-        momentum,
-        dampening,
-        wd,
-        nesterov,
-    }
+    Sgd { momentum, dampening, wd, nesterov }
 }
 
 impl OptimizerConfig for Sgd {
@@ -82,11 +70,7 @@ pub struct Adam {
 
 impl Default for Adam {
     fn default() -> Self {
-        Adam {
-            beta1: 0.9,
-            beta2: 0.999,
-            wd: 0.,
-        }
+        Adam { beta1: 0.9, beta2: 0.999, wd: 0. }
     }
 }
 
@@ -111,11 +95,7 @@ pub struct AdamW {
 
 impl Default for AdamW {
     fn default() -> Self {
-        AdamW {
-            beta1: 0.9,
-            beta2: 0.999,
-            wd: 0.01,
-        }
+        AdamW { beta1: 0.9, beta2: 0.999, wd: 0.01 }
     }
 }
 
@@ -142,41 +122,22 @@ pub struct RmsProp {
 
 impl Default for RmsProp {
     fn default() -> Self {
-        RmsProp {
-            alpha: 0.99,
-            eps: 1e-8,
-            wd: 0.,
-            momentum: 0.,
-            centered: false,
-        }
+        RmsProp { alpha: 0.99, eps: 1e-8, wd: 0., momentum: 0., centered: false }
     }
 }
 
 /// Creates the configuration for the RmsProp optimizer.
 pub fn rms_prop(alpha: f64, eps: f64, wd: f64, momentum: f64, centered: bool) -> RmsProp {
-    RmsProp {
-        alpha,
-        eps,
-        wd,
-        momentum,
-        centered,
-    }
+    RmsProp { alpha, eps, wd, momentum, centered }
 }
 
 impl OptimizerConfig for RmsProp {
     fn build_copt(&self, lr: f64) -> Result<COptimizer, TchError> {
-        COptimizer::rms_prop(
-            lr,
-            self.alpha,
-            self.eps,
-            self.wd,
-            self.momentum,
-            self.centered,
-        )
+        COptimizer::rms_prop(lr, self.alpha, self.eps, self.wd, self.momentum, self.centered)
     }
 }
 
-impl<T> Optimizer<T> {
+impl Optimizer {
     fn add_missing_variables(&mut self) {
         let v = self.variables.lock().unwrap();
         if v.trainable_variables.len() > self.variables_in_optimizer {
@@ -216,7 +177,7 @@ impl<T> Optimizer<T> {
             let clip_coef = max / (total_norm + 1e-6);
             if clip_coef < 1.0 {
                 for var in v.trainable_variables.iter() {
-                    let _t = var.tensor.grad().g_mul_1(clip_coef);
+                    let _t = var.tensor.grad().g_mul_scalar_(clip_coef);
                 }
             }
         })
@@ -281,11 +242,7 @@ impl<T> Optimizer<T> {
     /// Returns all the trainable variables for this optimizer.
     pub fn trainable_variables(&self) -> Vec<Tensor> {
         let variables = self.variables.lock().unwrap();
-        variables
-            .trainable_variables
-            .iter()
-            .map(|v| v.tensor.shallow_clone())
-            .collect()
+        variables.trainable_variables.iter().map(|v| v.tensor.shallow_clone()).collect()
     }
 
     /// Sets the optimizer weight decay.
@@ -295,9 +252,7 @@ impl<T> Optimizer<T> {
 
     /// Sets the optimizer weight decay.
     pub fn set_weight_decay_group(&mut self, group: usize, weight_decay: f64) {
-        self.opt
-            .set_weight_decay_group(group, weight_decay)
-            .unwrap()
+        self.opt.set_weight_decay_group(group, weight_decay).unwrap()
     }
     /// Get gradient L2 norm over all trainable parameters.
     ///

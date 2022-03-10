@@ -1,8 +1,10 @@
 //! Variable stores.
 use super::Init;
 use crate::tensor::Tensor;
+use crate::wrappers::stream::ReadSeekAdapter;
 use crate::{Device, Kind, TchError};
 use std::collections::HashMap;
+use std::io::{Read, Seek};
 use std::ops::Div;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -52,14 +54,9 @@ pub struct Entry<'a> {
 impl VarStore {
     /// Creates a new var-store located on the specified device.
     pub fn new(device: Device) -> VarStore {
-        let variables = Variables {
-            named_variables: HashMap::new(),
-            trainable_variables: Vec::new(),
-        };
-        VarStore {
-            variables_: Arc::new(Mutex::new(variables)),
-            device,
-        }
+        let variables =
+            Variables { named_variables: HashMap::new(), trainable_variables: Vec::new() };
+        VarStore { variables_: Arc::new(Mutex::new(variables)), device }
     }
 
     /// Gets the device for this var-store.
@@ -82,11 +79,7 @@ impl VarStore {
     /// Returns all the trainable variables for this var-store.
     pub fn trainable_variables(&self) -> Vec<Tensor> {
         let variables = self.variables_.lock().unwrap();
-        variables
-            .trainable_variables
-            .iter()
-            .map(|v| v.tensor.shallow_clone())
-            .collect()
+        variables.trainable_variables.iter().map(|v| v.tensor.shallow_clone()).collect()
     }
 
     /// Returns all variables along with their names.
@@ -105,27 +98,33 @@ impl VarStore {
     /// the top level path for the var store and can be combined with '/'
     /// to create sub-paths.
     pub fn root(&self) -> Path {
-        Path {
-            path: vec![],
-            group: 0,
-            var_store: self,
-        }
+        Path { path: vec![], group: 0, var_store: self }
     }
 
     /// Saves the var-store variable values to a file.
     ///
     /// Weight values for all the tensors currently stored in the
-    /// var-store gets saved in the given file.
+    /// var-store are saved in the given file.
     pub fn save<T: AsRef<std::path::Path>>(&self, path: T) -> Result<(), TchError> {
         let variables = self.variables_.lock().unwrap();
         let named_tensors = variables.named_variables.iter().collect::<Vec<_>>();
         Tensor::save_multi(named_tensors.as_slice(), path)
     }
 
+    /// Saves the var-store variable values to a stream.
+    ///
+    /// Weight values for all the tensors currently stored in the
+    /// var-store gets saved in the given stream.
+    pub fn save_to_stream<W: std::io::Write>(&self, stream: W) -> Result<(), TchError> {
+        let variables = self.variables_.lock().unwrap();
+        let named_tensors = variables.named_variables.iter().collect::<Vec<_>>();
+        Tensor::save_multi_to_stream(named_tensors.as_slice(), stream)
+    }
+
     /// Loads the var-store variable values from a file.
     ///
     /// Weight values for all the tensors currently stored in the
-    /// var-store gets loaded from the given file. Note that the set of
+    /// var-store are loaded from the given file. Note that the set of
     /// variables stored in the var-store is not changed, only the values
     /// for these tensors are modified.
     pub fn load<T: AsRef<std::path::Path>>(&mut self, path: T) -> Result<(), TchError> {
@@ -139,6 +138,31 @@ impl VarStore {
                     return Err(TchError::TensorNameNotFound(
                         name.to_string(),
                         path.as_ref().to_string_lossy().into_owned(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Loads the var-store variable values from a stream.
+    ///
+    /// Weight values for all the tensors currently stored in the
+    /// var-store gets loaded from the given stream. Note that the set of
+    /// variables stored in the var-store is not changed, only the values
+    /// for these tensors are modified.
+    pub fn load_from_stream<S: Read + Seek>(&mut self, stream: S) -> Result<(), TchError> {
+        let adapter = ReadSeekAdapter::new(stream);
+        let named_tensors = Tensor::load_multi_from_stream_with_device(adapter, self.device)?;
+        let named_tensors: HashMap<_, _> = named_tensors.into_iter().collect();
+        let mut variables = self.variables_.lock().unwrap();
+        for (name, var) in variables.named_variables.iter_mut() {
+            match named_tensors.get(name) {
+                Some(src) => crate::no_grad(|| var.f_copy_(src).map_err(|e| e.path_context(name)))?,
+                None => {
+                    return Err(TchError::TensorNameNotFound(
+                        name.to_string(),
+                        "source stream".to_string(),
                     ));
                 }
             }
@@ -196,6 +220,44 @@ impl VarStore {
         }
     }
 
+    /// Casts all variables in a var store to the target kind .
+    ///
+    /// For floating-point conversion, methods `half`, `bfloat16`, `float` and `double`
+    /// should be preferred as they ensure only float-like variables will be converted
+    /// to the target type.
+    pub fn set_kind(&mut self, kind: Kind) {
+        self.root().set_kind(kind);
+    }
+
+    /// Casts all float-like variable of a var store to half-precision (Half kind).
+    pub fn half(&mut self) {
+        self.root().half();
+    }
+
+    /// Casts all float-like variable of a var store to bfloat16-precision (BFloat16 kind).
+    pub fn bfloat16(&mut self) {
+        self.root().bfloat16();
+    }
+
+    /// Casts all float-like variable of a var store to single-precision (Float kind).
+    pub fn float(&mut self) {
+        self.root().float();
+    }
+
+    /// Casts all float-like variable of a var store to single-precision (Double kind).
+    pub fn double(&mut self) {
+        self.root().double();
+    }
+
+    /// Migrates a var store and all its tensor to a target device.
+    pub fn set_device(&mut self, device: Device) {
+        let mut variables = self.variables_.lock().unwrap();
+        for (_, variable) in variables.named_variables.iter_mut() {
+            variable.set_data(&variable.to_device(device));
+        }
+        self.device = device
+    }
+
     /// Copies variable values from a source var store to this var store.
     ///
     /// All the variables in this var store have to exist with the same
@@ -234,19 +296,11 @@ impl<'a> Path<'a> {
         }
         let mut path = self.path.clone();
         path.push(s);
-        Path {
-            path,
-            group: self.group,
-            var_store: self.var_store,
-        }
+        Path { path, group: self.group, var_store: self.var_store }
     }
 
     pub fn set_group(&self, group: usize) -> Path<'a> {
-        Path {
-            path: self.path.clone(),
-            group,
-            var_store: self.var_store,
-        }
+        Path { path: self.path.clone(), group, var_store: self.var_store }
     }
 
     /// Gets the device where the var-store variables are stored.
@@ -265,6 +319,68 @@ impl<'a> Path<'a> {
         }
     }
 
+    /// Casts all variables in a var store sub-path to the target kind .
+    ///
+    /// Only the variable in the path sub-tree are cast to the target kind:
+    /// other var store variables are unaffected. For floating-point conversion, methods
+    /// `half`, `bfloat16`, `float` and `double` should be preferred as they ensure only
+    /// float-like variables will be converted to the target type.
+    pub fn set_kind(&mut self, kind: Kind) {
+        let path_root = self.path.join(SEP.to_string().as_str());
+        let mut variables = self.var_store.variables_.lock().unwrap();
+        for (variable_name, variable) in variables.named_variables.iter_mut() {
+            if variable_name.starts_with(&path_root) {
+                variable.set_data(&variable.to_kind(kind));
+            }
+        }
+    }
+
+    /// Casts all float-like variables in a var store sub-path to the target kind .
+    ///
+    /// Only the float-like variable in the path sub-tree are cast to the target kind:
+    /// other var store variables are unaffected
+    fn set_float_kind(&mut self, kind: Kind) {
+        let path_root = self.path.join(SEP.to_string().as_str());
+        let mut variables = self.var_store.variables_.lock().unwrap();
+        for (variable_name, variable) in variables.named_variables.iter_mut() {
+            if variable_name.starts_with(&path_root) & variable.is_floating_point() {
+                variable.set_data(&variable.to_kind(kind));
+            }
+        }
+    }
+
+    /// Casts all float-like variables in a var store sub-path to half-precision (Half kind).
+    ///
+    /// Only the variable in the path sub-tree are cast to half-precision:
+    /// other var store variables are unaffected
+    pub fn half(&mut self) {
+        self.set_float_kind(Kind::Half);
+    }
+
+    /// Casts all float-like variables in a var store sub-path to bfloat16-precision (BFloat16 kind).
+    ///
+    /// Only the variable in the path sub-tree are cast to bfloat16-precision:
+    /// other var store variables are unaffected
+    pub fn bfloat16(&mut self) {
+        self.set_float_kind(Kind::BFloat16);
+    }
+
+    /// Casts all float-like variables in a var store sub-path to single-precision (Float kind).
+    ///
+    /// Only the variable in the path sub-tree are cast to single-precision:
+    /// other var store variables are unaffected
+    pub fn float(&mut self) {
+        self.set_float_kind(Kind::Float);
+    }
+
+    /// Casts all float-like variables in a var store sub-path to double-precision (Double kind).
+    ///
+    /// Only the variable in the path sub-tree are cast to double-precision:
+    /// other var store variables are unaffected
+    pub fn double(&mut self) {
+        self.set_float_kind(Kind::Double);
+    }
+
     pub(crate) fn add(&self, name: &str, tensor: Tensor, trainable: bool) -> Tensor {
         let path = self.path(name);
         let mut variables = self.var_store.variables_.lock().unwrap();
@@ -273,21 +389,12 @@ impl<'a> Path<'a> {
         } else {
             path
         };
-        let tensor = if trainable {
-            tensor.set_requires_grad(true)
-        } else {
-            tensor
-        };
+        let tensor = if trainable { tensor.set_requires_grad(true) } else { tensor };
         if trainable {
-            let var = Var {
-                tensor: tensor.shallow_clone(),
-                group: self.group,
-            };
+            let var = Var { tensor: tensor.shallow_clone(), group: self.group };
             variables.trainable_variables.push(var);
         };
-        variables
-            .named_variables
-            .insert(path, tensor.shallow_clone());
+        variables.named_variables.insert(path, tensor.shallow_clone());
         tensor
     }
 
@@ -303,21 +410,12 @@ impl<'a> Path<'a> {
             return var.shallow_clone();
         }
 
-        let tensor = if trainable {
-            tensor.set_requires_grad(true)
-        } else {
-            tensor
-        };
+        let tensor = if trainable { tensor.set_requires_grad(true) } else { tensor };
         if trainable {
-            let var = Var {
-                tensor: tensor.shallow_clone(),
-                group: self.group,
-            };
+            let var = Var { tensor: tensor.shallow_clone(), group: self.group };
             variables.trainable_variables.push(var);
         }
-        variables
-            .named_variables
-            .insert(path, tensor.shallow_clone());
+        variables.named_variables.insert(path, tensor.shallow_clone());
         tensor
     }
 
@@ -383,10 +481,7 @@ impl<'a> Path<'a> {
     /// The variable uses a float tensor initialized randomly using a
     /// standard normal distribution.
     pub fn f_randn_standard(&self, name: &str, dims: &[i64]) -> Result<Tensor, TchError> {
-        let init = Init::Randn {
-            mean: 0.,
-            stdev: 1.,
-        };
+        let init = Init::Randn { mean: 0., stdev: 1. };
         self.f_var(name, dims, init)
     }
 
@@ -444,7 +539,7 @@ impl<'a> Path<'a> {
     /// given tensor.
     pub fn f_var_copy(&self, name: &str, t: &Tensor) -> Result<Tensor, TchError> {
         let mut v = self.f_zeros(name, &t.size())?;
-        crate::no_grad(|| v.f_copy_(&t))?;
+        crate::no_grad(|| v.f_copy_(t))?;
         Ok(v)
     }
 
@@ -558,20 +653,13 @@ impl<'a> Path<'a> {
     pub fn get(&self, name: &str) -> Option<Tensor> {
         let path = self.path(name);
         let variables = self.var_store.variables_.lock().unwrap();
-        variables
-            .named_variables
-            .get(&path)
-            .map(|v| v.shallow_clone())
+        variables.named_variables.get(&path).map(|v| v.shallow_clone())
     }
 
     /// Gets the entry corresponding to a given name for in-place manipulation.
     pub fn entry<'b>(&'b self, name: &'b str) -> Entry<'b> {
         let variables = self.var_store.variables_.lock().unwrap();
-        Entry {
-            name,
-            variables,
-            path: &self,
-        }
+        Entry { name, variables, path: self }
     }
 }
 
@@ -584,14 +672,13 @@ impl<'a> Entry<'a> {
     /// initialized according to the init parameter.
     pub fn or_var(self, dims: &[i64], init: Init) -> Tensor {
         let v = super::init(init, dims, self.path.device());
-        self.path
-            .get_or_add_with_lock(self.name, v, true, self.variables)
+        self.path.get_or_add_with_lock(self.name, v, true, self.variables)
     }
 
     /// Returns the existing entry if, otherwise create a new variable.
     pub fn or_var_copy(self, tensor: &Tensor) -> Tensor {
         let mut v = self.or_zeros(&tensor.size());
-        crate::no_grad(|| v.copy_(&tensor));
+        crate::no_grad(|| v.copy_(tensor));
         v
     }
 
@@ -608,8 +695,7 @@ impl<'a> Entry<'a> {
     /// Returns the existing entry if, otherwise create a new variable.
     pub fn or_ones_no_train(self, dims: &[i64]) -> Tensor {
         let o = Tensor::ones(dims, (Kind::Float, self.path.device()));
-        self.path
-            .get_or_add_with_lock(self.name, o, true, self.variables)
+        self.path.get_or_add_with_lock(self.name, o, true, self.variables)
     }
 
     /// Returns the existing entry if, otherwise create a new variable.
@@ -619,10 +705,7 @@ impl<'a> Entry<'a> {
 
     /// Returns the existing entry if, otherwise create a new variable.
     pub fn or_randn_standard(self, dims: &[i64]) -> Tensor {
-        let init = Init::Randn {
-            mean: 0.,
-            stdev: 1.,
-        };
+        let init = Init::Randn { mean: 0., stdev: 1. };
         self.or_var(dims, init)
     }
 
@@ -639,8 +722,7 @@ impl<'a> Entry<'a> {
     /// Returns the existing entry if, otherwise create a new variable.
     pub fn or_zeros_no_train(self, dims: &[i64]) -> Tensor {
         let z = Tensor::zeros(dims, (Kind::Float, self.path.device()));
-        self.path
-            .get_or_add_with_lock(self.name, z, true, self.variables)
+        self.path.get_or_add_with_lock(self.name, z, true, self.variables)
     }
 }
 

@@ -19,10 +19,7 @@ const OPTIM_BATCHSIZE: i64 = 64;
 const OPTIM_EPOCHS: i64 = 4;
 
 fn model(p: &nn::Path, nact: i64) -> Box<dyn Fn(&Tensor) -> (Tensor, Tensor)> {
-    let stride = |s| nn::ConvConfig {
-        stride: s,
-        ..Default::default()
-    };
+    let stride = |s| nn::ConvConfig { stride: s, ..Default::default() };
     let seq = nn::seq()
         .add(nn::conv2d(p / "c1", NSTACK, 32, 8, stride(4)))
         .add_fn(|xs| xs.relu())
@@ -50,11 +47,7 @@ struct FrameStack {
 
 impl FrameStack {
     fn new(nprocs: i64, nstack: i64) -> FrameStack {
-        FrameStack {
-            data: Tensor::zeros(&[nprocs, nstack, 84, 84], FLOAT_CPU),
-            nprocs,
-            nstack,
-        }
+        FrameStack { data: Tensor::zeros(&[nprocs, nstack, 84, 84], FLOAT_CPU), nprocs, nstack }
     }
 
     fn update<'a>(&'a mut self, img: &Tensor, masks: Option<&Tensor>) -> &'a Tensor {
@@ -98,7 +91,7 @@ pub fn train() -> cpython::PyResult<()> {
         for s in 0..NSTEPS {
             let (critic, actor) = tch::no_grad(|| model(&s_states.get(s)));
             let probs = actor.softmax(-1, Kind::Float);
-            let actions = probs.multinomial(1, true).squeeze1(-1);
+            let actions = probs.multinomial(1, true).squeeze_dim(-1);
             let step = env.step(Vec::<i64>::from(&actions))?;
 
             sum_rewards += &step.reward;
@@ -109,14 +102,12 @@ pub fn train() -> cpython::PyResult<()> {
             sum_rewards *= &masks;
             let obs = frame_stack.update(&step.obs, Some(&masks));
             s_actions.get(s).copy_(&actions);
-            s_values.get(s).copy_(&critic.squeeze1(-1));
+            s_values.get(s).copy_(&critic.squeeze_dim(-1));
             s_states.get(s + 1).copy_(&obs);
             s_rewards.get(s).copy_(&step.reward);
             s_masks.get(s).copy_(&masks);
         }
-        let states = s_states
-            .narrow(0, 0, NSTEPS)
-            .view([train_size, NSTACK, 84, 84]);
+        let states = s_states.narrow(0, 0, NSTEPS).view([train_size, NSTACK, 84, 84]);
         let returns = {
             let r = Tensor::zeros(&[NSTEPS + 1, NPROCS], FLOAT_CPU);
             let critic = tch::no_grad(|| model(&s_states.get(-1)).0);
@@ -138,11 +129,10 @@ pub fn train() -> cpython::PyResult<()> {
             let probs = actor.softmax(-1, Kind::Float);
             let action_log_probs = {
                 let index = actions.unsqueeze(-1).to_device(device);
-                log_probs.gather(-1, &index, false).squeeze1(-1)
+                log_probs.gather(-1, &index, false).squeeze_dim(-1)
             };
-            let dist_entropy = (-log_probs * probs)
-                .sum1(&[-1], false, Kind::Float)
-                .mean(Kind::Float);
+            let dist_entropy =
+                (-log_probs * probs).sum_dim_intlist(&[-1], false, Kind::Float).mean(Kind::Float);
             let advantages = returns.to_device(device) - critic;
             let value_loss = (&advantages * &advantages).mean(Kind::Float);
             let action_loss = (-advantages.detach() * action_log_probs).mean(Kind::Float);
@@ -150,12 +140,7 @@ pub fn train() -> cpython::PyResult<()> {
             opt.backward_step_clip(&loss, 0.5);
         }
         if update_index > 0 && update_index % 25 == 0 {
-            println!(
-                "{} {:.0} {}",
-                update_index,
-                total_episodes,
-                total_rewards / total_episodes
-            );
+            println!("{} {:.0} {}", update_index, total_episodes, total_rewards / total_episodes);
             total_rewards = 0.;
             total_episodes = 0.;
         }
@@ -183,7 +168,7 @@ pub fn sample<T: AsRef<std::path::Path>>(weight_file: T) -> cpython::PyResult<()
     for _index in 0..5000 {
         let (_critic, actor) = tch::no_grad(|| model(&obs));
         let probs = actor.softmax(-1, Kind::Float);
-        let actions = probs.multinomial(1, true).squeeze1(-1);
+        let actions = probs.multinomial(1, true).squeeze_dim(-1);
         let step = env.step(Vec::<i64>::from(&actions))?;
 
         let masks = Tensor::from(1f32) - step.is_done;

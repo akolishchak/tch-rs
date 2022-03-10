@@ -46,10 +46,7 @@ pub fn run() -> cpython::PyResult<()> {
         // Perform some rollouts with the current model.
         loop {
             let action = tch::no_grad(|| {
-                obs.unsqueeze(0)
-                    .apply(&model)
-                    .softmax(1, Float)
-                    .multinomial(1, true)
+                obs.unsqueeze(0).apply(&model).softmax(1, Float).multinomial(1, true)
             });
             let action = i64::from(action);
             let step = env.step(action)?;
@@ -75,10 +72,11 @@ pub fn run() -> cpython::PyResult<()> {
         let rewards = accumulate_rewards(&steps);
         let rewards = Tensor::of_slice(&rewards).to_kind(Float);
         let action_mask =
-            Tensor::zeros(&[batch_size, 2], tch::kind::FLOAT_CPU).scatter1(1, &actions, 1.0);
+            Tensor::zeros(&[batch_size, 2], tch::kind::FLOAT_CPU).scatter_value(1, &actions, 1.0);
         let obs: Vec<Tensor> = steps.into_iter().map(|s| s.obs).collect();
         let logits = Tensor::stack(&obs, 0).apply(&model);
-        let log_probs = (action_mask * logits.log_softmax(1, Float)).sum1(&[1], false, Float);
+        let log_probs =
+            (action_mask * logits.log_softmax(1, Float)).sum_dim_intlist(&[1], false, Float);
         let loss = -(rewards * log_probs).mean(Float);
         opt.backward_step(&loss)
     }

@@ -7,10 +7,7 @@ fn max_pool2d(xs: &Tensor) -> Tensor {
 }
 
 fn fire(p: nn::Path, c_in: i64, c_squeeze: i64, c_exp1: i64, c_exp3: i64) -> impl Module {
-    let cfg3 = nn::ConvConfig {
-        padding: 1,
-        ..Default::default()
-    };
+    let cfg3 = nn::ConvConfig { padding: 1, ..Default::default() };
     let squeeze = nn::conv2d(&p / "squeeze", c_in, c_squeeze, 1, Default::default());
     let exp1 = nn::conv2d(&p / "expand1x1", c_squeeze, c_exp1, 1, Default::default());
     let exp3 = nn::conv2d(&p / "expand3x3", c_squeeze, c_exp3, 3, cfg3);
@@ -23,40 +20,34 @@ fn fire(p: nn::Path, c_in: i64, c_squeeze: i64, c_exp1: i64, c_exp3: i64) -> imp
 fn squeezenet(p: &nn::Path, v1_0: bool, nclasses: i64) -> impl ModuleT {
     let f_p = p / "features";
     let c_p = p / "classifier";
-    let initial_conv_cfg = nn::ConvConfig {
-        stride: 2,
-        ..Default::default()
-    };
-    let final_conv_cfg = nn::ConvConfig {
-        stride: 1,
-        ..Default::default()
-    };
+    let initial_conv_cfg = nn::ConvConfig { stride: 2, ..Default::default() };
+    let final_conv_cfg = nn::ConvConfig { stride: 1, ..Default::default() };
     let features = if v1_0 {
         nn::seq_t()
             .add(nn::conv2d(&f_p / "0", 3, 96, 7, initial_conv_cfg))
             .add_fn(|xs| xs.relu())
-            .add_fn(|xs| max_pool2d(&xs))
+            .add_fn(max_pool2d)
             .add(fire(&f_p / "3", 96, 16, 64, 64))
             .add(fire(&f_p / "4", 128, 16, 64, 64))
             .add(fire(&f_p / "5", 128, 32, 128, 128))
-            .add_fn(|xs| max_pool2d(&xs))
+            .add_fn(max_pool2d)
             .add(fire(&f_p / "7", 256, 32, 128, 128))
             .add(fire(&f_p / "8", 256, 48, 192, 192))
             .add(fire(&f_p / "9", 384, 48, 192, 192))
             .add(fire(&f_p / "10", 384, 64, 256, 256))
-            .add_fn(|xs| max_pool2d(&xs))
+            .add_fn(max_pool2d)
             .add(fire(&f_p / "12", 512, 64, 256, 256))
     } else {
         nn::seq_t()
             .add(nn::conv2d(&f_p / "0", 3, 64, 3, initial_conv_cfg))
             .add_fn(|xs| xs.relu())
-            .add_fn(|xs| max_pool2d(&xs))
+            .add_fn(max_pool2d)
             .add(fire(&f_p / "3", 64, 16, 64, 64))
             .add(fire(&f_p / "4", 128, 16, 64, 64))
-            .add_fn(|xs| max_pool2d(&xs))
+            .add_fn(max_pool2d)
             .add(fire(&f_p / "6", 128, 32, 128, 128))
             .add(fire(&f_p / "7", 256, 32, 128, 128))
-            .add_fn(|xs| max_pool2d(&xs))
+            .add_fn(max_pool2d)
             .add(fire(&f_p / "9", 256, 48, 192, 192))
             .add(fire(&f_p / "10", 384, 48, 192, 192))
             .add(fire(&f_p / "11", 384, 64, 256, 256))

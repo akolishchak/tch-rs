@@ -1,6 +1,6 @@
 use std::fs;
 use tch::nn::OptimizerConfig;
-use tch::{nn::Init, nn::VarStore, Device, Kind, Tensor};
+use tch::{nn::linear, nn::Init, nn::VarStore, Device, Kind, Tensor};
 
 #[test]
 fn path_components() {
@@ -55,11 +55,71 @@ fn save_and_load_var_store() {
 }
 
 #[test]
+fn save_to_stream_and_load_var_store() {
+    let filename =
+        std::env::temp_dir().join(format!("tch-vs-load-stream-complete-{}", std::process::id()));
+    let add = |vs: &tch::nn::Path| {
+        let v = vs.sub("a").sub("b").ones("t2", &[3]);
+        let u = vs.zeros("t1", &[4]);
+        let _w = vs.sub("a").sub("b").sub("ccc").ones("t123", &[3]);
+        let _w = vs.sub("a").sub("b").sub("ccc").ones("t123", &[3]);
+        (u, v)
+    };
+    let vs1 = VarStore::new(Device::Cpu);
+    let mut vs2 = VarStore::new(Device::Cpu);
+    let (mut u1, mut v1) = add(&vs1.root());
+    let (u2, v2) = add(&vs2.root());
+    tch::no_grad(|| {
+        u1 += 42.0;
+        v1 *= 2.0;
+    });
+    assert_eq!(f64::from(&u1.mean(Kind::Float)), 42.0);
+    assert_eq!(f64::from(&v1.mean(Kind::Float)), 2.0);
+    assert_eq!(f64::from(&u2.mean(Kind::Float)), 0.0);
+    assert_eq!(f64::from(&v2.mean(Kind::Float)), 1.0);
+    vs1.save_to_stream(std::fs::File::create(&filename).unwrap()).unwrap();
+    vs2.load(&filename).unwrap();
+    assert_eq!(f64::from(&u1.mean(Kind::Float)), 42.0);
+    assert_eq!(f64::from(&u2.mean(Kind::Float)), 42.0);
+    assert_eq!(f64::from(&v2.mean(Kind::Float)), 2.0);
+    fs::remove_file(filename).unwrap();
+}
+
+#[test]
+fn save_and_load_from_stream_var_store() {
+    let filename =
+        std::env::temp_dir().join(format!("tch-vs-load-stream-complete-{}", std::process::id()));
+    let add = |vs: &tch::nn::Path| {
+        let v = vs.sub("a").sub("b").ones("t2", &[3]);
+        let u = vs.zeros("t1", &[4]);
+        let _w = vs.sub("a").sub("b").sub("ccc").ones("t123", &[3]);
+        let _w = vs.sub("a").sub("b").sub("ccc").ones("t123", &[3]);
+        (u, v)
+    };
+    let vs1 = VarStore::new(Device::Cpu);
+    let mut vs2 = VarStore::new(Device::Cpu);
+    let (mut u1, mut v1) = add(&vs1.root());
+    let (u2, v2) = add(&vs2.root());
+    tch::no_grad(|| {
+        u1 += 42.0;
+        v1 *= 2.0;
+    });
+    assert_eq!(f64::from(&u1.mean(Kind::Float)), 42.0);
+    assert_eq!(f64::from(&v1.mean(Kind::Float)), 2.0);
+    assert_eq!(f64::from(&u2.mean(Kind::Float)), 0.0);
+    assert_eq!(f64::from(&v2.mean(Kind::Float)), 1.0);
+    vs1.save(&filename).unwrap();
+    vs2.load_from_stream(std::fs::File::open(&filename).unwrap()).unwrap();
+    assert_eq!(f64::from(&u1.mean(Kind::Float)), 42.0);
+    assert_eq!(f64::from(&u2.mean(Kind::Float)), 42.0);
+    assert_eq!(f64::from(&v2.mean(Kind::Float)), 2.0);
+    fs::remove_file(filename).unwrap();
+}
+
+#[test]
 fn save_and_load_partial_var_store() {
-    let filename = std::env::temp_dir().join(format!(
-        "tch-vs-partial-load-complete-{}",
-        std::process::id()
-    ));
+    let filename =
+        std::env::temp_dir().join(format!("tch-vs-partial-load-complete-{}", std::process::id()));
     let add = |vs: &tch::nn::Path| {
         let v = vs.sub("a").sub("b").ones("t2", &[3]);
         let u = vs.zeros("t1", &[4]);
@@ -124,10 +184,8 @@ fn save_and_load_var_store_incomplete_file() {
 
 #[test]
 fn save_and_load_partial_var_store_incomplete_file() {
-    let filename = std::env::temp_dir().join(format!(
-        "tch-vs-partial-load-incomplete-{}",
-        std::process::id()
-    ));
+    let filename =
+        std::env::temp_dir().join(format!("tch-vs-partial-load-incomplete-{}", std::process::id()));
     let add = |vs: &tch::nn::Path| {
         let u = vs.zeros("t1", &[4]);
         let _w = vs.sub("a").sub("b").sub("ccc").ones("t123", &[3]);
@@ -171,27 +229,14 @@ fn init_test() {
     assert_eq!(Vec::<f64>::from(&ones), [0.5, 0.5, 0.5]);
     let forty_two = vs.root().var("t4", &[2], Init::Const(42.));
     assert_eq!(Vec::<f64>::from(&forty_two), [42., 42.]);
-    let uniform = vs
-        .root()
-        .var("t5", &[100], Init::Uniform { lo: 1.0, up: 2.0 });
+    let uniform = vs.root().var("t5", &[100], Init::Uniform { lo: 1.0, up: 2.0 });
     let uniform_min = f64::from(&uniform.min());
     let uniform_max = f64::from(&uniform.max());
     assert!(uniform_min >= 1., "min {}", uniform_min);
     assert!(uniform_max <= 2., "max {}", uniform_max);
     let uniform_std = f64::from(&uniform.std(true));
-    assert!(
-        uniform_std > 0.15 && uniform_std < 0.35,
-        "std {}",
-        uniform_std
-    );
-    let normal = vs.root().var(
-        "normal",
-        &[100],
-        Init::Randn {
-            mean: 0.,
-            stdev: 0.02,
-        },
-    );
+    assert!(uniform_std > 0.15 && uniform_std < 0.35, "std {}", uniform_std);
+    let normal = vs.root().var("normal", &[100], Init::Randn { mean: 0., stdev: 0.02 });
     let normal_std = f64::from(&normal.std(true));
     assert!(normal_std <= 0.03, "std {}", normal_std);
     let mut vs2 = VarStore::new(Device::Cpu);
@@ -201,7 +246,7 @@ fn init_test() {
     assert_eq!(Vec::<f64>::from(&ones), [0., 0., 0.]);
 }
 
-fn check_param_group(mut opt: tch::nn::Optimizer<tch::nn::Sgd>, foo: Tensor, bar: Tensor) {
+fn check_param_group(mut opt: tch::nn::Optimizer, foo: Tensor, bar: Tensor) {
     opt.set_lr(0.1);
     opt.set_lr_group(0, 0.);
     for _idx in 1..100 {
@@ -259,12 +304,7 @@ fn save_and_load_with_group() {
         let v = vs.set_group(1).sub("a").sub("b").ones("t2", &[3]);
         let u = vs.zeros("t1", &[4]);
         let _w = vs.sub("a").sub("b").sub("ccc").ones("t123", &[3]);
-        let _w = vs
-            .sub("a")
-            .set_group(4)
-            .sub("b")
-            .sub("ccc")
-            .ones("t123", &[3]);
+        let _w = vs.sub("a").set_group(4).sub("b").sub("ccc").ones("t123", &[3]);
         (u, v)
     };
     let vs1 = VarStore::new(Device::Cpu);
@@ -316,4 +356,139 @@ fn param_group_weight_decay() {
     }
     assert_eq!(format!("{:.2}", f64::from(&foo)), "0.30");
     assert_eq!(format!("{:.2}", f64::from(&bar)), "0.69");
+}
+
+#[test]
+fn half_precision_conversion_entire_varstore() {
+    let mut vs = VarStore::new(Device::Cpu);
+
+    let _ = vs.root().var("zeros", &[1], Init::Const(0.));
+    let _ = vs.root().var("ones", &[1], Init::Const(1.));
+    let _ = vs.root().var("forty_two", &[1], Init::Const(42.));
+
+    assert_eq!(vs.root().get("zeros").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().get("ones").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().get("forty_two").unwrap().kind(), Kind::Float);
+
+    vs.half();
+
+    assert_eq!(vs.root().get("zeros").unwrap().kind(), Kind::Half);
+    assert_eq!(vs.root().get("ones").unwrap().kind(), Kind::Half);
+    assert_eq!(vs.root().get("forty_two").unwrap().kind(), Kind::Half);
+
+    vs.bfloat16();
+
+    assert_eq!(vs.root().get("zeros").unwrap().kind(), Kind::BFloat16);
+    assert_eq!(vs.root().get("ones").unwrap().kind(), Kind::BFloat16);
+    assert_eq!(vs.root().get("forty_two").unwrap().kind(), Kind::BFloat16);
+
+    vs.double();
+
+    assert_eq!(vs.root().get("zeros").unwrap().kind(), Kind::Double);
+    assert_eq!(vs.root().get("ones").unwrap().kind(), Kind::Double);
+    assert_eq!(vs.root().get("forty_two").unwrap().kind(), Kind::Double);
+
+    vs.float();
+
+    assert_eq!(vs.root().get("zeros").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().get("ones").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().get("forty_two").unwrap().kind(), Kind::Float);
+    assert_eq!(format!("{:.2}", f64::from(vs.root().get("zeros").unwrap())), "0.00");
+    assert_eq!(format!("{:.2}", f64::from(vs.root().get("ones").unwrap())), "1.00");
+    assert_eq!(format!("{:.2}", f64::from(vs.root().get("forty_two").unwrap())), "42.00");
+}
+
+#[test]
+fn path_half_precision_conversion() {
+    let vs = VarStore::new(Device::Cpu);
+
+    // Define a VarStore with 3 variables. 2 of them are in a sub-path named "convert" and
+    // will be cast to half-precision. The other variables in the VarStore will be unaffected
+    let _ = vs.root().sub("ignore").var("zeros", &[1], Init::Const(0.));
+    let _ = vs.root().sub("convert").sub("group_1").var("ones", &[1], Init::Const(1.));
+    let linear_layer =
+        linear(vs.root().sub("convert").sub("group_2").sub("linear"), 10, 42, Default::default());
+
+    assert_eq!(vs.root().sub("ignore").get("zeros").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().sub("convert").sub("group_1").get("ones").unwrap().kind(), Kind::Float);
+    assert_eq!(linear_layer.ws.kind(), Kind::Float);
+    assert_eq!(linear_layer.bs.as_ref().unwrap().kind(), Kind::Float);
+
+    vs.root().sub("convert").half();
+
+    assert_eq!(vs.root().sub("ignore").get("zeros").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().sub("convert").sub("group_1").get("ones").unwrap().kind(), Kind::Half);
+    assert_eq!(linear_layer.ws.kind(), Kind::Half);
+    assert_eq!(linear_layer.bs.as_ref().unwrap().kind(), Kind::Half);
+
+    vs.root().sub("convert").float();
+
+    assert_eq!(vs.root().sub("ignore").get("zeros").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().sub("convert").sub("group_1").get("ones").unwrap().kind(), Kind::Float);
+    assert_eq!(linear_layer.ws.kind(), Kind::Float);
+    assert_eq!(linear_layer.bs.as_ref().unwrap().kind(), Kind::Float);
+}
+
+#[test]
+fn path_free_type_conversion() {
+    let vs = VarStore::new(Device::Cpu);
+
+    // Define a VarStore with 3 variables. 2 of them are in a sub-path named "convert" and
+    // will be cast to half-precision. The other variables in the VarStore will be unaffected
+    let _ = vs.root().sub("ignore").var("zeros", &[1], Init::Const(0.));
+    let _ = vs.root().sub("convert").sub("group_1").var("ones", &[1], Init::Const(1.));
+    let _ = vs.root().sub("convert").sub("group_2").var("zeros", &[1], Init::Const(0.));
+
+    assert_eq!(vs.root().sub("ignore").get("zeros").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().sub("convert").sub("group_1").get("ones").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().sub("convert").sub("group_2").get("zeros").unwrap().kind(), Kind::Float);
+
+    vs.root().sub("convert").set_kind(Kind::Bool);
+
+    assert_eq!(vs.root().sub("ignore").get("zeros").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().sub("convert").sub("group_1").get("ones").unwrap().kind(), Kind::Bool);
+    assert_eq!(vs.root().sub("convert").sub("group_2").get("zeros").unwrap().kind(), Kind::Bool);
+
+    vs.root().sub("convert").set_kind(Kind::Float);
+
+    assert_eq!(vs.root().sub("ignore").get("zeros").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().sub("convert").sub("group_1").get("ones").unwrap().kind(), Kind::Float);
+    assert_eq!(vs.root().sub("convert").sub("group_2").get("zeros").unwrap().kind(), Kind::Float);
+
+    assert_eq!(format!("{:.2}", f64::from(vs.root().sub("ignore").get("zeros").unwrap())), "0.00");
+    assert_eq!(
+        format!("{:.2}", f64::from(vs.root().sub("convert").sub("group_1").get("ones").unwrap())),
+        "1.00"
+    );
+    assert_eq!(
+        format!("{:.2}", f64::from(vs.root().sub("convert").sub("group_2").get("zeros").unwrap())),
+        "0.00"
+    );
+}
+
+#[test]
+fn device_migration() {
+    if tch::Cuda::is_available() {
+        let mut vs = VarStore::new(Device::Cpu);
+
+        let _ = vs.root().var("zeros", &[3], Init::Const(0.));
+        let _ = vs.root().var("ones", &[3], Init::Const(1.));
+        let linear_layer = linear(vs.root().sub("linear"), 10, 42, Default::default());
+
+        vs.set_device(Device::Cuda(0));
+
+        assert_eq!(vs.root().get("zeros").unwrap().device(), Device::Cuda(0));
+        assert_eq!(vs.root().get("ones").unwrap().device(), Device::Cuda(0));
+        assert_eq!(linear_layer.ws.device(), Device::Cuda(0));
+        assert_eq!(linear_layer.bs.as_ref().unwrap().device(), Device::Cuda(0));
+        assert_eq!(vs.device(), Device::Cuda(0));
+
+        vs.set_device(Device::Cpu);
+
+        assert_eq!(vs.root().get("zeros").unwrap().device(), Device::Cpu);
+        assert_eq!(vs.root().get("ones").unwrap().device(), Device::Cpu);
+        assert_eq!(linear_layer.ws.device(), Device::Cpu);
+        assert_eq!(linear_layer.bs.as_ref().unwrap().device(), Device::Cpu);
+        assert_eq!(vs.device(), Device::Cpu);
+    }
 }

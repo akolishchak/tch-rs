@@ -1,4 +1,6 @@
-use libc::{c_char, c_int, c_void, size_t};
+pub mod io;
+
+use libc::{c_char, c_int, c_uchar, c_void, size_t};
 
 #[repr(C)]
 pub struct C_scalar {
@@ -88,12 +90,20 @@ extern "C" {
     ) -> *mut C_tensor;
     pub fn at_grad_set_enabled(b: c_int) -> c_int;
     pub fn at_save(arg: *mut C_tensor, filename: *const c_char);
+    pub fn at_save_to_stream(arg: *mut C_tensor, stream_ptr: *mut c_void);
     pub fn at_load(filename: *const c_char) -> *mut C_tensor;
+    pub fn at_load_from_stream(stream_ptr: *mut c_void) -> *mut C_tensor;
     pub fn at_save_multi(
         args: *const *mut C_tensor,
         names: *const *const c_char,
         n: c_int,
         filename: *const c_char,
+    );
+    pub fn at_save_multi_to_stream(
+        args: *const *mut C_tensor,
+        names: *const *const c_char,
+        n: c_int,
+        stream_ptr: *mut c_void,
     );
     pub fn at_load_callback(
         filename: *const c_char,
@@ -106,6 +116,13 @@ extern "C" {
         f: extern "C" fn(*mut c_void, name: *const c_char, t: *mut C_tensor),
         device_id: c_int,
     );
+    pub fn at_load_from_stream_callback(
+        stream_ptr: *mut c_void,
+        data: *mut c_void,
+        f: extern "C" fn(*mut c_void, name: *const c_char, t: *mut C_tensor),
+        enable_device_id: bool,
+        device_id: c_int,
+    );
 
     pub fn at_manual_seed(seed: i64);
 }
@@ -116,6 +133,8 @@ extern "C" {
     pub fn atc_cuda_device_count() -> c_int;
     pub fn atc_cuda_is_available() -> c_int;
     pub fn atc_cudnn_is_available() -> c_int;
+    pub fn atc_user_enabled_cudnn() -> c_int;
+    pub fn atc_set_user_enabled_cudnn(b: c_int);
     pub fn atc_set_benchmark_cudnn(b: c_int);
 }
 
@@ -161,6 +180,10 @@ extern "C" {
 extern "C" {
     pub fn at_save_image(arg: *mut C_tensor, filename: *const c_char) -> c_int;
     pub fn at_load_image(filename: *const c_char) -> *mut C_tensor;
+    pub fn at_load_image_from_memory(
+        img_data: *const c_uchar,
+        img_data_len: size_t,
+    ) -> *mut C_tensor;
     pub fn at_resize_image(arg: *mut C_tensor, out_w: c_int, out_h: c_int) -> *mut C_tensor;
 }
 
@@ -212,6 +235,13 @@ extern "C" {
     pub fn ati_to_string(arg: *mut CIValue) -> *mut c_char;
 
     pub fn ati_free(arg: *mut CIValue);
+
+    pub fn ati_object_method_(
+        arg: *mut CIValue,
+        method_name: *const c_char,
+        args: *const *mut CIValue,
+        n: c_int,
+    ) -> *mut CIValue;
 
     pub fn atm_load(filename: *const c_char) -> *mut CModule_;
     pub fn atm_load_on_device(filename: *const c_char, device: c_int) -> *mut CModule_;

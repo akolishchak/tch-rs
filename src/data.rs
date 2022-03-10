@@ -1,8 +1,6 @@
 //! Dataset iterators.
-use crate::{kind, Device, IndexOp, TchError, Tensor};
+use crate::{kind, kind::Kind, Device, IndexOp, TchError, Tensor};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader, Read};
 
 /// An iterator over a pair of tensors which have the same first dimension
 /// size.
@@ -74,7 +72,7 @@ impl Iter2 {
     /// The iterator would still run over the whole dataset but the order in
     /// which elements are grouped in mini-batches is randomized.
     pub fn shuffle(&mut self) -> &mut Iter2 {
-        let index = Tensor::randperm(self.total_size, kind::INT64_CPU);
+        let index = Tensor::randperm(self.total_size, (Kind::Int64, self.device));
         self.xs = self.xs.index_select(0, &index);
         self.ys = self.ys.index_select(0, &index);
         self
@@ -134,9 +132,7 @@ pub struct TextDataIter {
 impl TextData {
     /// Creates a text dataset from a file.
     pub fn new<P: AsRef<std::path::Path>>(filename: P) -> Result<TextData, TchError> {
-        let mut buf_reader = BufReader::new(File::open(filename)?);
-        let mut buffer = Vec::new();
-        buf_reader.read_to_end(&mut buffer)?;
+        let mut buffer = std::fs::read(filename)?;
 
         let mut label_for_char = HashMap::<u8, u8>::new();
         let mut char_for_label = Vec::<char>::new();
@@ -148,11 +144,7 @@ impl TextData {
             })
         }
 
-        Ok(TextData {
-            data: Tensor::of_slice(&buffer),
-            char_for_label,
-            label_for_char,
-        })
+        Ok(TextData { data: Tensor::of_slice(&buffer), char_for_label, label_for_char })
     }
 
     /// Returns the number of different characters/labels used by the dataset.
@@ -202,10 +194,7 @@ impl Iterator for TextDataIter {
         } else {
             self.batch_index += 1;
             let indexes = Vec::<i64>::from(&self.indexes.i(start..start + size));
-            let batch: Vec<_> = indexes
-                .iter()
-                .map(|&i| self.data.i(i..i + self.seq_len))
-                .collect();
+            let batch: Vec<_> = indexes.iter().map(|&i| self.data.i(i..i + self.seq_len)).collect();
             let batch: Vec<_> = batch.iter().collect();
             Some(Tensor::stack(&batch, 0))
         }

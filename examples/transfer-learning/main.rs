@@ -3,7 +3,6 @@
 //
 // The pre-trained weight files containing the pre-trained weights can be found here:
 // https://github.com/LaurentMazare/ocaml-torch/releases/download/v0.1-unstable/resnet18.ot
-extern crate tch;
 use anyhow::{bail, Result};
 use tch::nn::{self, OptimizerConfig};
 use tch::vision::{imagenet, resnet};
@@ -36,9 +35,7 @@ pub fn main() -> Result<()> {
         let loss = predicted.cross_entropy_for_logits(&dataset.train_labels);
         sgd.backward_step(&loss);
 
-        let test_accuracy = test_images
-            .apply(&linear)
-            .accuracy_for_logits(&dataset.test_labels);
+        let test_accuracy = test_images.apply(&linear).accuracy_for_logits(&dataset.test_labels);
         println!("{} {:.2}%", epoch_idx, 100. * f64::from(test_accuracy));
     }
     Ok(())

@@ -24,9 +24,7 @@ pub trait ModuleT: std::fmt::Debug + Send {
         let mut sum_accuracy = 0f64;
         let mut sample_count = 0f64;
         for (xs, ys) in Iter2::new(xs, ys, batch_size).return_smaller_last_batch() {
-            let acc = self
-                .forward_t(&xs.to_device(d), false)
-                .accuracy_for_logits(&ys.to_device(d));
+            let acc = self.forward_t(&xs.to_device(d), false).accuracy_for_logits(&ys.to_device(d));
             let size = xs.size()[0] as f64;
             sum_accuracy += f64::from(&acc) * size;
             sample_count += size;
@@ -40,29 +38,29 @@ where
     T: Module,
 {
     fn forward_t(&self, xs: &Tensor, _train: bool) -> Tensor {
-        self.forward(&xs)
+        self.forward(xs)
     }
 }
 
 impl Tensor {
     pub fn apply<M: Module>(&self, m: &M) -> Tensor {
-        m.forward(&self)
+        m.forward(self)
     }
 
     pub fn apply_t<M: ModuleT>(&self, m: &M, train: bool) -> Tensor {
-        m.forward_t(&self, train)
+        m.forward_t(self, train)
     }
 
     pub fn apply_opt<M: Module>(&self, m: &Option<M>) -> Tensor {
         match m {
-            Some(m) => m.forward(&self),
+            Some(m) => m.forward(self),
             None => self.shallow_clone(),
         }
     }
 
     pub fn apply_opt_t<M: ModuleT>(&self, m: &Option<M>, train: bool) -> Tensor {
         match m {
-            Some(m) => m.forward_t(&self, train),
+            Some(m) => m.forward_t(self, train),
             None => self.shallow_clone(),
         }
     }

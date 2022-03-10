@@ -1,7 +1,6 @@
 // This example illustrates how to use a PyTorch model trained and exported using the
 // Python JIT API.
 // See https://pytorch.org/tutorials/advanced/cpp_export.html for more details.
-extern crate tch;
 use anyhow::{bail, Result};
 use tch::vision::imagenet;
 
@@ -18,10 +17,7 @@ pub fn main() -> Result<()> {
     let model = tch::CModule::load(model_file)?;
 
     // Apply the forward pass of the model to get the logits.
-    let output = image
-        .unsqueeze(0)
-        .apply(&model)
-        .softmax(-1, tch::Kind::Float);
+    let output = image.unsqueeze(0).apply(&model).softmax(-1, tch::Kind::Float);
 
     // Print the top 5 categories for this image.
     for (probability, class) in imagenet::top(&output, 5).iter() {

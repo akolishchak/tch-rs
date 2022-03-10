@@ -9,14 +9,15 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use curl::easy::Easy;
+const TORCH_VERSION: &str = "1.10.0";
 
-const TORCH_VERSION: &str = "1.8.1";
-
+#[cfg(feature = "curl")]
 fn download<P: AsRef<Path>>(source_url: &str, target_file: P) -> anyhow::Result<()> {
+    use curl::easy::Easy;
+    use std::io::Write;
+
     let f = fs::File::create(&target_file)?;
     let mut writer = io::BufWriter::new(f);
     let mut easy = Easy::new();
@@ -27,12 +28,13 @@ fn download<P: AsRef<Path>>(source_url: &str, target_file: P) -> anyhow::Result<
     if response_code == 200 {
         Ok(())
     } else {
-        Err(anyhow::anyhow!(
-            "Unexpected response code {} for {}",
-            response_code,
-            source_url
-        ))
+        Err(anyhow::anyhow!("Unexpected response code {} for {}", response_code, source_url))
     }
+}
+
+#[cfg(not(feature = "curl"))]
+fn download<P: AsRef<Path>>(_source_url: &str, _target_file: P) -> anyhow::Result<()> {
+    anyhow::bail!("cannot use download without the curl feature")
 }
 
 fn extract<P: AsRef<Path>>(filename: P, outpath: P) -> anyhow::Result<()> {
@@ -71,9 +73,7 @@ fn check_system_location() -> Option<PathBuf> {
     let os = env::var("CARGO_CFG_TARGET_OS").expect("Unable to get TARGET_OS");
 
     match os.as_str() {
-        "linux" => Path::new("/usr/lib/libtorch.so")
-            .exists()
-            .then(|| PathBuf::from("/usr")),
+        "linux" => Path::new("/usr/lib/libtorch.so").exists().then(|| PathBuf::from("/usr")),
         _ => None,
     }
 }
@@ -83,16 +83,15 @@ fn prepare_libtorch_dir() -> PathBuf {
 
     let device = match env_var_rerun("TORCH_CUDA_VERSION") {
         Ok(cuda_env) => match os.as_str() {
-            "linux" | "windows" => cuda_env
-                .trim()
-                .to_lowercase()
-                .trim_start_matches("cu")
-                .split('.')
-                .take(2)
-                .fold("cu".to_owned(), |mut acc, curr| {
-                    acc += curr;
-                    acc
-                }),
+            "linux" | "windows" => {
+                cuda_env.trim().to_lowercase().trim_start_matches("cu").split('.').take(2).fold(
+                    "cu".to_owned(),
+                    |mut acc, curr| {
+                        acc += curr;
+                        acc
+                    },
+                )
+            }
             os_str => panic!(
                 "CUDA was specified with `TORCH_CUDA_VERSION`, but pre-built \
                  binaries with CUDA are only available for Linux and Windows, not: {}.",
@@ -171,10 +170,7 @@ fn make<P: AsRef<Path>>(libtorch: P, use_cuda: bool, use_hip: bool) {
                 .warnings(false)
                 .include(libtorch.as_ref().join("include"))
                 .include(libtorch.as_ref().join("include/torch/csrc/api/include"))
-                .flag(&format!(
-                    "-Wl,-rpath={}",
-                    libtorch.as_ref().join("lib").display()
-                ))
+                .flag(&format!("-Wl,-rpath={}", libtorch.as_ref().join("lib").display()))
                 .flag("-std=c++14")
                 .flag(&format!("-D_GLIBCXX_USE_CXX11_ABI={}", libtorch_cxx11_abi))
                 .file("libtch/torch_api.cpp")
@@ -224,10 +220,7 @@ fn main() {
             || libtorch.join("lib").join("torch_cuda_cpp.dll").exists();
         let use_hip = libtorch.join("lib").join("libtorch_hip.so").exists()
             || libtorch.join("lib").join("torch_hip.dll").exists();
-        println!(
-            "cargo:rustc-link-search=native={}",
-            libtorch.join("lib").display()
-        );
+        println!("cargo:rustc-link-search=native={}", libtorch.join("lib").display());
 
         make(&libtorch, use_cuda, use_hip);
 
@@ -244,8 +237,8 @@ fn main() {
         if use_hip {
             println!("cargo:rustc-link-lib=torch_hip");
         }
-        println!("cargo:rustc-link-lib=torch");
         println!("cargo:rustc-link-lib=torch_cpu");
+        println!("cargo:rustc-link-lib=torch");
         println!("cargo:rustc-link-lib=c10");
         if use_hip {
             println!("cargo:rustc-link-lib=c10_hip");

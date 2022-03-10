@@ -10,7 +10,6 @@
      t10k-labels-idx1-ubyte.gz
 */
 
-extern crate tch;
 use anyhow::Result;
 use tch::{nn, nn::Module, nn::OptimizerConfig, Kind, Reduction, Tensor};
 
@@ -57,7 +56,7 @@ fn loss(recon_x: &Tensor, x: &Tensor, mu: &Tensor, logvar: &Tensor) -> Tensor {
     //     Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
     // https://arxiv.org/abs/1312.6114
     // 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    let kld = -0.5 * (1i64 + logvar - mu.pow(2) - logvar.exp()).sum(Kind::Float);
+    let kld = -0.5 * (1i64 + logvar - mu.pow_tensor_scalar(2) - logvar.exp()).sum(Kind::Float);
     bce + kld
 }
 
@@ -66,14 +65,9 @@ fn image_matrix(imgs: &Tensor, sz: i64) -> Result<Tensor> {
     let imgs = (imgs * 256.).clamp(0., 255.).to_kind(Kind::Uint8);
     let mut ys: Vec<Tensor> = vec![];
     for i in 0..sz {
-        ys.push(Tensor::cat(
-            &(0..sz)
-                .map(|j| imgs.narrow(0, 4 * i + j, 1))
-                .collect::<Vec<_>>(),
-            2,
-        ))
+        ys.push(Tensor::cat(&(0..sz).map(|j| imgs.narrow(0, 4 * i + j, 1)).collect::<Vec<_>>(), 2))
     }
-    Ok(Tensor::cat(&ys, 3).squeeze1(0))
+    Ok(Tensor::cat(&ys, 3).squeeze_dim(0))
 }
 
 pub fn main() -> Result<()> {

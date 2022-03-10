@@ -10,10 +10,8 @@
    The eng-fra.txt file should be moved in the data directory.
 */
 
-extern crate rand;
-use rand::prelude::*;
-extern crate tch;
 use anyhow::Result;
+use rand::prelude::*;
 use tch::nn::{GRUState, Module, OptimizerConfig, RNN};
 use tch::{nn, Device, Kind, Tensor};
 
@@ -44,7 +42,7 @@ impl Encoder {
     fn forward(&self, xs: &Tensor, state: &GRUState) -> (Tensor, GRUState) {
         let xs = self.embedding.forward(&xs).view([1, -1]);
         let state = self.gru.step(&xs, &state);
-        (state.value().squeeze1(1), state)
+        (state.value().squeeze_dim(1), state)
     }
 }
 
@@ -78,14 +76,9 @@ impl Decoder {
         enc_outputs: &Tensor,
         is_training: bool,
     ) -> (Tensor, GRUState) {
-        let xs = self
-            .embedding
-            .forward(&xs)
-            .dropout(0.1, is_training)
-            .view([1, -1]);
-        let attn_weights = Tensor::cat(&[&xs, &state.value().squeeze1(1)], 1)
-            .apply(&self.attn)
-            .unsqueeze(0);
+        let xs = self.embedding.forward(&xs).dropout(0.1, is_training).view([1, -1]);
+        let attn_weights =
+            Tensor::cat(&[&xs, &state.value().squeeze_dim(1)], 1).apply(&self.attn).unsqueeze(0);
         let (sz1, sz2, sz3) = enc_outputs.size3().unwrap();
         let enc_outputs = if sz2 == MAX_LENGTH as i64 {
             enc_outputs.shallow_clone()
@@ -94,18 +87,10 @@ impl Decoder {
             let zeros = Tensor::zeros(&shape, (Kind::Float, self.device));
             Tensor::cat(&[enc_outputs, &zeros], 1)
         };
-        let attn_applied = attn_weights.bmm(&enc_outputs).squeeze1(1);
-        let xs = Tensor::cat(&[&xs, &attn_applied], 1)
-            .apply(&self.attn_combine)
-            .relu();
+        let attn_applied = attn_weights.bmm(&enc_outputs).squeeze_dim(1);
+        let xs = Tensor::cat(&[&xs, &attn_applied], 1).apply(&self.attn_combine).relu();
         let state = self.gru.step(&xs, &state);
-        (
-            self.linear
-                .forward(&state.value())
-                .log_softmax(-1, Kind::Float)
-                .squeeze1(1),
-            state,
-        )
+        (self.linear.forward(&state.value()).log_softmax(-1, Kind::Float).squeeze_dim(1), state)
     }
 }
 
@@ -150,11 +135,7 @@ impl Model {
             if self.decoder_eos == i64::from(&output) as usize {
                 break;
             }
-            prev = if use_teacher_forcing {
-                target_tensor
-            } else {
-                output
-            };
+            prev = if use_teacher_forcing { target_tensor } else { output };
         }
         loss
     }
@@ -193,10 +174,7 @@ struct LossStats {
 
 impl LossStats {
     fn new() -> LossStats {
-        LossStats {
-            total_loss: 0.,
-            samples: 0,
-        }
+        LossStats { total_loss: 0., samples: 0 }
     }
 
     fn update(&mut self, loss: f64) {

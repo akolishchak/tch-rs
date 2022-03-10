@@ -1,6 +1,5 @@
 // The pre-trained weights can be downloaded here:
 //   https://github.com/LaurentMazare/ocaml-torch/releases/download/v0.1-unstable/yolo-v3.ot
-extern crate tch;
 
 mod coco_classes;
 mod darknet;
@@ -20,8 +19,6 @@ struct Bbox {
     xmax: f64,
     ymax: f64,
     confidence: f64,
-    class_index: usize,
-    class_confidence: f64,
 }
 
 // Intersection over union of two bounding boxes.
@@ -39,9 +36,7 @@ fn iou(b1: &Bbox, b2: &Bbox) -> f64 {
 // Assumes x1 <= x2 and y1 <= y2
 pub fn draw_rect(t: &mut Tensor, x1: i64, x2: i64, y1: i64, y2: i64) {
     let color = Tensor::of_slice(&[0., 0., 1.]).view([3, 1, 1]);
-    t.narrow(2, x1, x2 - x1)
-        .narrow(1, y1, y2 - y1)
-        .copy_(&color)
+    t.narrow(2, x1, x2 - x1).narrow(1, y1, y2 - y1).copy_(&color)
 }
 
 pub fn report(pred: &Tensor, img: &Tensor, w: i64, h: i64) -> Result<Tensor> {
@@ -67,8 +62,6 @@ pub fn report(pred: &Tensor, img: &Tensor, w: i64, h: i64) -> Result<Tensor> {
                     xmax: pred[0] + pred[2] / 2.,
                     ymax: pred[1] + pred[3] / 2.,
                     confidence,
-                    class_index,
-                    class_confidence: pred[5 + class_index],
                 };
                 bboxes[class_index].push(bbox)
             }

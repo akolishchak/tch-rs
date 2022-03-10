@@ -62,15 +62,7 @@ impl SparseAdam {
             .map(|x| Buffer::new(&x.tensor.size()))
             .collect();
 
-        SparseAdam {
-            lr,
-            beta1,
-            beta2,
-            eps,
-            force_sparse,
-            vars,
-            buffers,
-        }
+        SparseAdam { lr, beta1, beta2, eps, force_sparse, vars, buffers }
     }
 
     /// Ensure that the gradient update is not part of the autograd routine
@@ -94,7 +86,7 @@ impl SparseAdam {
             if grad.is_sparse() || self.force_sparse {
                 // convert matrix to sparse matrix if necessary
                 if !grad.is_sparse() {
-                    grad = grad.to_sparse1(1);
+                    grad = grad.to_sparse_sparse_dim(1);
                 }
 
                 // deduplicate coordinates in the sparse matrix
@@ -113,12 +105,8 @@ impl SparseAdam {
                 let update_second_moment = (1.0 - self.beta2)
                     * (&values * &values - buffer.second_moment.index_select(0, &indices));
 
-                let _ = buffer
-                    .first_moment
-                    .index_add_(0, &indices, &update_first_moment);
-                let _ = buffer
-                    .second_moment
-                    .index_add_(0, &indices, &update_second_moment);
+                let _ = buffer.first_moment.index_add_(0, &indices, &update_first_moment);
+                let _ = buffer.second_moment.index_add_(0, &indices, &update_second_moment);
 
                 // first part of update step -lr * m_t / (1-b_1^t)
                 let part1 =

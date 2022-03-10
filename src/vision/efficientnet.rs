@@ -45,8 +45,6 @@ fn block_args() -> Vec<BlockArgs> {
 struct Params {
     width: f64,
     depth: f64,
-    res: i64,
-    dropout: f64,
 }
 
 impl Params {
@@ -67,9 +65,9 @@ impl Params {
     }
 }
 
-// Conv2D with same padding.
+/// Conv2D with same padding.
 #[allow(clippy::many_single_char_names)]
-fn conv2d(vs: nn::Path, i: i64, o: i64, k: i64, c: ConvConfig) -> impl Module {
+pub fn conv2d_same(vs: nn::Path, i: i64, o: i64, k: i64, c: ConvConfig) -> impl Module {
     let conv2d = nn::conv2d(vs, i, o, k, c);
     let s = c.stride;
     nn::func(move |xs| {
@@ -81,8 +79,7 @@ fn conv2d(vs: nn::Path, i: i64, o: i64, k: i64, c: ConvConfig) -> impl Module {
         let pad_h = i64::max((oh - 1) * s + k - ih, 0);
         let pad_w = i64::max((ow - 1) * s + k - iw, 0);
         if pad_h > 0 || pad_w > 0 {
-            xs.zero_pad2d(pad_w / 2, pad_w - pad_w / 2, pad_h / 2, pad_h - pad_h / 2)
-                .apply(&conv2d)
+            xs.zero_pad2d(pad_w / 2, pad_w - pad_w / 2, pad_h / 2, pad_h - pad_h / 2).apply(&conv2d)
         } else {
             xs.apply(&conv2d)
         }
@@ -90,37 +87,32 @@ fn conv2d(vs: nn::Path, i: i64, o: i64, k: i64, c: ConvConfig) -> impl Module {
 }
 
 impl Params {
-    fn of_tuple(width: f64, depth: f64, res: i64, dropout: f64) -> Params {
-        Params {
-            width,
-            depth,
-            res,
-            dropout,
-        }
+    fn of_tuple(width: f64, depth: f64) -> Params {
+        Params { width, depth }
     }
     fn b0() -> Params {
-        Params::of_tuple(1.0, 1.0, 224, 0.2)
+        Params::of_tuple(1.0, 1.0)
     }
     fn b1() -> Params {
-        Params::of_tuple(1.0, 1.1, 240, 0.2)
+        Params::of_tuple(1.0, 1.1)
     }
     fn b2() -> Params {
-        Params::of_tuple(1.1, 1.2, 260, 0.3)
+        Params::of_tuple(1.1, 1.2)
     }
     fn b3() -> Params {
-        Params::of_tuple(1.2, 1.4, 300, 0.3)
+        Params::of_tuple(1.2, 1.4)
     }
     fn b4() -> Params {
-        Params::of_tuple(1.4, 1.8, 380, 0.4)
+        Params::of_tuple(1.4, 1.8)
     }
     fn b5() -> Params {
-        Params::of_tuple(1.6, 2.2, 456, 0.4)
+        Params::of_tuple(1.6, 2.2)
     }
     fn b6() -> Params {
-        Params::of_tuple(1.8, 2.6, 528, 0.5)
+        Params::of_tuple(1.8, 2.6)
     }
     fn b7() -> Params {
-        Params::of_tuple(2.0, 3.1, 600, 0.5)
+        Params::of_tuple(2.0, 3.1)
     }
 }
 
@@ -139,60 +131,37 @@ fn block(p: nn::Path, args: BlockArgs) -> impl ModuleT {
         eps: BATCH_NORM_EPSILON,
         ..Default::default()
     };
-    let conv_no_bias = nn::ConvConfig {
-        bias: false,
-        ..Default::default()
-    };
-    let depthwise_conv = nn::ConvConfig {
-        stride: args.stride,
-        groups: oup,
-        bias: false,
-        ..Default::default()
-    };
+    let conv_no_bias = nn::ConvConfig { bias: false, ..Default::default() };
+    let depthwise_conv =
+        nn::ConvConfig { stride: args.stride, groups: oup, bias: false, ..Default::default() };
 
     let expansion = if args.expand_ratio != 1 {
         nn::seq_t()
-            .add(conv2d(&p / "_expand_conv", inp, oup, 1, conv_no_bias))
+            .add(conv2d_same(&p / "_expand_conv", inp, oup, 1, conv_no_bias))
             .add(nn::batch_norm2d(&p / "_bn0", oup, bn2d))
             .add_fn(|xs| xs.swish())
     } else {
         nn::seq_t()
     };
-    let depthwise_conv = conv2d(
-        &p / "_depthwise_conv",
-        oup,
-        oup,
-        args.kernel_size,
-        depthwise_conv,
-    );
+    let depthwise_conv =
+        conv2d_same(&p / "_depthwise_conv", oup, oup, args.kernel_size, depthwise_conv);
     let depthwise_bn = nn::batch_norm2d(&p / "_bn1", oup, bn2d);
     let se = args.se_ratio.map(|se_ratio| {
         let nsc = i64::max(1, (inp as f64 * se_ratio) as i64);
         nn::seq_t()
-            .add(conv2d(&p / "_se_reduce", oup, nsc, 1, Default::default()))
+            .add(conv2d_same(&p / "_se_reduce", oup, nsc, 1, Default::default()))
             .add_fn(|xs| xs.swish())
-            .add(conv2d(&p / "_se_expand", nsc, oup, 1, Default::default()))
+            .add(conv2d_same(&p / "_se_expand", nsc, oup, 1, Default::default()))
     });
-    let project_conv = conv2d(&p / "_project_conv", oup, final_oup, 1, conv_no_bias);
+    let project_conv = conv2d_same(&p / "_project_conv", oup, final_oup, 1, conv_no_bias);
     let project_bn = nn::batch_norm2d(&p / "_bn2", final_oup, bn2d);
     nn::func_t(move |xs, train| {
-        let ys = if args.expand_ratio != 1 {
-            xs.apply_t(&expansion, train)
-        } else {
-            xs.shallow_clone()
-        };
-        let ys = ys
-            .apply(&depthwise_conv)
-            .apply_t(&depthwise_bn, train)
-            .swish();
+        let ys =
+            if args.expand_ratio != 1 { xs.apply_t(&expansion, train) } else { xs.shallow_clone() };
+        let ys = ys.apply(&depthwise_conv).apply_t(&depthwise_bn, train).swish();
         let ys = match &se {
             None => ys,
-            Some(seq) => {
-                ys.adaptive_avg_pool2d(&[1, 1])
-                    .apply_t(seq, train)
-                    .sigmoid()
-                    * ys
-            }
+            Some(seq) => ys.adaptive_avg_pool2d(&[1, 1]).apply_t(seq, train).sigmoid() * ys,
         };
         let ys = ys.apply(&project_conv).apply_t(&project_bn, train);
         if args.stride == 1 && inp == final_oup {
@@ -211,17 +180,10 @@ fn efficientnet(p: &nn::Path, params: Params, nclasses: i64) -> impl ModuleT {
         eps: BATCH_NORM_EPSILON,
         ..Default::default()
     };
-    let conv_no_bias = nn::ConvConfig {
-        bias: false,
-        ..Default::default()
-    };
-    let conv_s2 = nn::ConvConfig {
-        stride: 2,
-        bias: false,
-        ..Default::default()
-    };
+    let conv_no_bias = nn::ConvConfig { bias: false, ..Default::default() };
+    let conv_s2 = nn::ConvConfig { stride: 2, bias: false, ..Default::default() };
     let out_c = params.round_filters(32);
-    let conv_stem = conv2d(p / "_conv_stem", 3, out_c, 3, conv_s2);
+    let conv_stem = conv2d_same(p / "_conv_stem", 3, out_c, 3, conv_s2);
     let bn0 = nn::batch_norm2d(p / "_bn0", out_c, bn2d);
     let mut blocks = nn::seq_t();
     let block_p = p / "_blocks";
@@ -234,11 +196,7 @@ fn efficientnet(p: &nn::Path, params: Params, nclasses: i64) -> impl ModuleT {
         };
         blocks = blocks.add(block(&block_p / block_idx, arg));
         block_idx += 1;
-        let arg = BlockArgs {
-            input_filters: arg.output_filters,
-            stride: 1,
-            ..arg
-        };
+        let arg = BlockArgs { input_filters: arg.output_filters, stride: 1, ..arg };
         for _i in 1..params.round_repeats(arg.num_repeat) {
             blocks = blocks.add(block(&block_p / block_idx, arg));
             block_idx += 1;
@@ -246,11 +204,14 @@ fn efficientnet(p: &nn::Path, params: Params, nclasses: i64) -> impl ModuleT {
     }
     let in_channels = params.round_filters(args.last().unwrap().output_filters);
     let out_c = params.round_filters(1280);
-    let conv_head = conv2d(p / "_conv_head", in_channels, out_c, 1, conv_no_bias);
+    let conv_head = conv2d_same(p / "_conv_head", in_channels, out_c, 1, conv_no_bias);
     let bn1 = nn::batch_norm2d(p / "_bn1", out_c, bn2d);
-    let classifier = nn::seq_t()
-        .add_fn_t(|xs, train| xs.dropout(0.2, train))
-        .add(nn::linear(p / "_fc", out_c, nclasses, Default::default()));
+    let classifier = nn::seq_t().add_fn_t(|xs, train| xs.dropout(0.2, train)).add(nn::linear(
+        p / "_fc",
+        out_c,
+        nclasses,
+        Default::default(),
+    ));
     nn::func_t(move |xs, train| {
         xs.apply(&conv_stem)
             .apply_t(&bn0, train)
@@ -260,8 +221,8 @@ fn efficientnet(p: &nn::Path, params: Params, nclasses: i64) -> impl ModuleT {
             .apply_t(&bn1, train)
             .swish()
             .adaptive_avg_pool2d(&[1, 1])
-            .squeeze1(-1)
-            .squeeze1(-1)
+            .squeeze_dim(-1)
+            .squeeze_dim(-1)
             .apply_t(&classifier, train)
     })
 }
